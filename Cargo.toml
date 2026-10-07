@@ -8,8 +8,14 @@ edition = "2021"
 name = "ms2rescore_rs"
 crate-type = ["cdylib"]
 
+[features]
+# Thermo .raw reading via the .NET host (mzdata/thermo). On by default; build with
+# --no-default-features where the prebuilt libnethost.lib cannot be linked.
+default = ["thermo"]
+thermo = ["mzdata/thermo"]
+
 [dependencies]
-mzdata = { version = "0.59.2", features = ["thermo", "parallelism"] }
+mzdata = { version = "0.59.2", features = ["parallelism"] }
 pyo3 = { version = "0.28.2", features = ["anyhow"] }
 rayon = "1.10"
 timsrust = "0.4.2"

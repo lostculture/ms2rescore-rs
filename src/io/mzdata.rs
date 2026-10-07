@@ -67,7 +67,9 @@ pub fn parse_precursor_info(
 
 /// Read MS2 spectra from spectrum files with mzdata
 pub fn read_ms2_spectra(spectrum_path: &str) -> Result<Vec<MS2Spectrum>, std::io::Error> {
+    #[cfg_attr(not(feature = "thermo"), allow(unused_mut))]
     let mut reader = MZReader::open_path(spectrum_path)?;
+    #[cfg(feature = "thermo")]
     if let MZReader::ThermoRaw(inner) = &mut reader {
         inner.set_centroiding(true);
     }
