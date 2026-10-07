@@ -8,32 +8,22 @@ use rayon::prelude::*;
 use rustyms::prelude::CompoundPeptidoformIon;
 
 use crate::annotation::{parse_fragmentation_model, parse_mass_mode};
-use crate::utils::{build_theoretical_fragments, extract_charge};
+use crate::utils::{build_theoretical_fragments, extract_charge, parse_ion_key};
 
 #[derive(Clone)]
 struct IonTypeSpec {
     key: String,
     series: char,
+    variant: i8,
     charge: usize,
 }
 
 fn parse_ion_type_spec(ion_type: &str) -> Option<IonTypeSpec> {
-    let mut chars = ion_type.chars();
-    let series = chars.next()?;
-    if !matches!(series, 'a' | 'b' | 'c' | 'x' | 'y' | 'z') {
-        return None;
-    }
-
-    let suffix: String = chars.collect();
-    let charge = if suffix.is_empty() {
-        1
-    } else {
-        suffix.parse().ok()?
-    };
-
+    let (series, variant, charge) = parse_ion_key(ion_type)?;
     Some(IonTypeSpec {
         key: ion_type.to_string(),
         series,
+        variant,
         charge,
     })
 }
@@ -62,10 +52,10 @@ pub fn ms2pip_compute_theoretical_mz(
         })
         .collect::<PyResult<_>>()?;
 
-    let ion_index: HashMap<(char, usize), usize> = ion_specs
+    let ion_index: HashMap<(char, i8, usize), usize> = ion_specs
         .iter()
         .enumerate()
-        .map(|(idx, spec)| ((spec.series, spec.charge), idx))
+        .map(|(idx, spec)| ((spec.series, spec.variant, spec.charge), idx))
         .collect();
 
     let results: Result<Vec<Vec<Vec<f32>>>, String> = py.detach(|| {
@@ -103,11 +93,12 @@ pub fn ms2pip_compute_theoretical_mz(
                 let mut mz_arrays = vec![vec![0.0_f32; n_ions]; ion_specs.len()];
 
                 for frag in &fragments {
-                    if frag.position < 1 || frag.position > n_ions {
+                    if frag.position < 1 || frag.position > n_ions || frag.neutral_loss {
                         continue;
                     }
 
-                    if let Some(&array_idx) = ion_index.get(&(frag.series, frag.charge)) {
+                    let key = (frag.series, frag.variant, frag.charge);
+                    if let Some(&array_idx) = ion_index.get(&key) {
                         let pos_idx = frag.position - 1;
                         if mz_arrays[array_idx][pos_idx] == 0.0 {
                             mz_arrays[array_idx][pos_idx] = frag.mz as f32;

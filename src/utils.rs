@@ -13,7 +13,58 @@ pub struct CachedFragment {
     pub series: char,
     pub position: usize,
     pub charge: usize,
+    /// Hydrogen-shift variant from rustyms (z+1 = 1, c-1 = -1, ...).
+    pub variant: i8,
+    /// True if the fragment carries a neutral loss (e.g. b-H2O).
+    pub neutral_loss: bool,
     pub mz: f64,
+}
+
+/// Build an ion-type key: `<series>[<signed variant>][<charge>]`.
+///
+/// Variant 0 keeps the legacy form (`y`, `y2` = doubly charged y). Non-zero
+/// variants separate the charge with an underscore so that it cannot be read
+/// as part of the variant: `z+1`, `z+1_2`, `c-1`.
+pub fn ion_key(series: char, variant: i8, charge: usize) -> String {
+    match (variant, charge) {
+        (0, c) if c <= 1 => series.to_string(),
+        (0, c) => format!("{series}{c}"),
+        (v, c) if c <= 1 => format!("{series}{v:+}"),
+        (v, c) => format!("{series}{v:+}_{c}"),
+    }
+}
+
+/// Parse an ion-type key made by [`ion_key`] into (series, variant, charge).
+pub fn parse_ion_key(key: &str) -> Option<(char, i8, usize)> {
+    let mut chars = key.chars();
+    let series = chars.next()?;
+    if !matches!(series, 'a' | 'b' | 'c' | 'x' | 'y' | 'z') {
+        return None;
+    }
+    let rest = chars.as_str();
+    let all_digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+
+    if rest.is_empty() {
+        return Some((series, 0, 1));
+    }
+    if let Some(sign) = rest.chars().next().filter(|c| *c == '+' || *c == '-') {
+        let (num, charge) = match rest[1..].split_once('_') {
+            Some((num, charge)) if all_digits(charge) => (num, charge.parse().ok()?),
+            Some(_) => return None,
+            None => (&rest[1..], 1),
+        };
+        if !all_digits(num) || charge == 0 {
+            return None;
+        }
+        let magnitude: i8 = num.parse().ok()?;
+        let variant = if sign == '-' { -magnitude } else { magnitude };
+        return (variant != 0).then_some((series, variant, charge));
+    }
+    if all_digits(rest) {
+        let charge: usize = rest.parse().ok()?;
+        return (charge > 0).then_some((series, 0, charge));
+    }
+    None
 }
 
 /// Floor value for log2-intensity clipping and unmatched-ion fill: log2(0.001).
@@ -26,21 +77,21 @@ pub fn ln_factorial(n: usize) -> f64 {
     (1..=n).map(|k| (k as f64).ln()).sum()
 }
 
-/// Parse a rustyms Fragment into (series_char, position, charge).
+/// Parse a rustyms Fragment into (series_char, position, charge, variant).
 /// Returns None for non-backbone ions (glycan, immonium, precursor, etc.).
 /// Position is 1-indexed (the series_number from rustyms).
-pub fn parse_fragment(frag: &Fragment) -> Option<(char, usize, usize)> {
-    let (series, pos) = match &frag.ion {
-        FragmentType::a(pos, _) => ('a', pos),
-        FragmentType::b(pos, _) => ('b', pos),
-        FragmentType::c(pos, _) => ('c', pos),
-        FragmentType::x(pos, _) => ('x', pos),
-        FragmentType::y(pos, _) => ('y', pos),
-        FragmentType::z(pos, _) => ('z', pos),
+pub fn parse_fragment(frag: &Fragment) -> Option<(char, usize, usize, i8)> {
+    let (series, pos, variant) = match &frag.ion {
+        FragmentType::a(pos, v) => ('a', pos, *v),
+        FragmentType::b(pos, v) => ('b', pos, *v),
+        FragmentType::c(pos, v) => ('c', pos, *v),
+        FragmentType::x(pos, v) => ('x', pos, *v),
+        FragmentType::y(pos, v) => ('y', pos, *v),
+        FragmentType::z(pos, v) => ('z', pos, *v),
         _ => return None,
     };
     let charge = frag.charge.value.unsigned_abs();
-    Some((series, pos.series_number, charge))
+    Some((series, pos.series_number, charge, variant))
 }
 
 /// Extract the precursor charge from a parsed peptidoform.
@@ -64,12 +115,14 @@ pub fn build_theoretical_fragments(
         .generate_theoretical_fragments(max_charge, model)
         .into_iter()
         .filter_map(|frag| {
-            let (series, position, charge) = parse_fragment(&frag)?;
+            let (series, position, charge, variant) = parse_fragment(&frag)?;
             let mz = frag.mz(mode)?.value;
             Some(CachedFragment {
                 series,
                 position,
                 charge,
+                variant,
+                neutral_loss: !frag.neutral_loss.is_empty(),
                 mz,
             })
         })
@@ -168,6 +221,29 @@ mod tests {
         assert_eq!(longest_true_run(&[true, true, false, true]), 2);
         assert_eq!(longest_true_run(&[true, true, true]), 3);
         assert_eq!(longest_true_run(&[false, true, false, true, true, false]), 2);
+    }
+
+    #[test]
+    fn test_ion_key_roundtrip() {
+        for (series, variant, charge, key) in [
+            ('y', 0, 1, "y"),
+            ('y', 0, 2, "y2"),
+            ('z', 1, 1, "z+1"),
+            ('z', 2, 1, "z+2"),
+            ('z', 1, 2, "z+1_2"),
+            ('c', -1, 1, "c-1"),
+            ('c', -1, 3, "c-1_3"),
+        ] {
+            assert_eq!(ion_key(series, variant, charge), key);
+            assert_eq!(parse_ion_key(key), Some((series, variant, charge)));
+        }
+    }
+
+    #[test]
+    fn test_parse_ion_key_rejects_malformed() {
+        for bad in ["", "q", "z+", "z+_2", "z+1x", "z1_2", "z+1_", "z+0", "z0", "z+1_0", "Z"] {
+            assert_eq!(parse_ion_key(bad), None, "{bad}");
+        }
     }
 
     #[test]

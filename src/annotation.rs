@@ -20,11 +20,23 @@ pub(crate) fn parse_fragmentation_model(s: &str) -> PyResult<FragmentationModel>
         "cidhcd" | "cid_hcd" | "cid-hcd" => Ok((*FragmentationModel::cid_hcd()).clone()),
         "etd" => Ok((*FragmentationModel::etd()).clone()),
         "ethcd" | "et+hcd" | "et_hcd" => Ok((*FragmentationModel::ethcd()).clone()),
+        "ead" => Ok((*FragmentationModel::ead()).clone()),
+        "ead_ext" => Ok(ead_extended()),
         "all" => Ok((*FragmentationModel::all()).clone()),
         other => Err(PyValueError::new_err(format!(
-            "Unsupported fragmentation_model: {other}. Expected one of: cidhcd, etd, ethcd, all."
+            "Unsupported fragmentation_model: {other}. \
+             Expected one of: cidhcd, etd, ethcd, ead, ead_ext, all."
         ))),
     }
+}
+
+/// rustyms EAD with the hydrogen-transfer products seen in EAD/ECD spectra:
+/// c-1 (c·) next to c, and z+2 next to z and z+1 (z·).
+fn ead_extended() -> FragmentationModel {
+    let mut model = (*FragmentationModel::ead()).clone();
+    model.c = model.c.clone().variants(vec![-1, 0]);
+    model.z = model.z.clone().variants(vec![0, 1, 2]);
+    model
 }
 
 pub(crate) fn parse_mass_mode(s: &str) -> PyResult<MassMode> {
@@ -214,6 +226,8 @@ pub fn annotate_ms2_spectra(
                             series: frag.series.to_string(),
                             position: frag.position,
                             charge: frag.charge,
+                            variant: frag.variant,
+                            neutral_loss: frag.neutral_loss,
                         });
                     }
                 }

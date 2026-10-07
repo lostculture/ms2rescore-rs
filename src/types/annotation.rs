@@ -10,6 +10,8 @@ type AnnotatedMS2SpectrumReduceArgs = (
     Vec<Vec<FragmentAnnotation>>,
 );
 
+type FragmentAnnotationReduceArgs = (String, usize, usize, i8, bool);
+
 /// A single fragment annotation on a peak.
 #[pyclass(module = "ms2rescore_rs", get_all, from_py_object)]
 #[derive(Debug, Clone)]
@@ -20,34 +22,60 @@ pub struct FragmentAnnotation {
     pub position: usize,
     /// Fragment charge state
     pub charge: usize,
+    /// Hydrogen-shift variant: 0 for the plain ion, +1 for z+1, -1 for c-1, ...
+    pub variant: i8,
+    /// True if the matched fragment carries a neutral loss (e.g. b-H2O)
+    pub neutral_loss: bool,
 }
 
 #[pymethods]
 impl FragmentAnnotation {
     #[new]
-    pub fn new(series: String, position: usize, charge: usize) -> Self {
+    #[pyo3(signature = (series, position, charge, variant=0, neutral_loss=false))]
+    pub fn new(
+        series: String,
+        position: usize,
+        charge: usize,
+        variant: i8,
+        neutral_loss: bool,
+    ) -> Self {
         FragmentAnnotation {
             series,
             position,
             charge,
+            variant,
+            neutral_loss,
         }
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "FragmentAnnotation(series='{}', position={}, charge={})",
-            self.series, self.position, self.charge
+            "FragmentAnnotation(series='{}', position={}, charge={}, variant={}, neutral_loss={})",
+            self.series,
+            self.position,
+            self.charge,
+            self.variant,
+            if self.neutral_loss { "True" } else { "False" }
         )
     }
 
     pub fn __reduce__(
         &self,
         py: Python<'_>,
-    ) -> PyResult<(Py<PyAny>, (String, usize, usize))> {
+    ) -> PyResult<(Py<PyAny>, FragmentAnnotationReduceArgs)> {
         let cls = py
             .import("ms2rescore_rs")?
             .getattr("FragmentAnnotation")?;
-        Ok((cls.into(), (self.series.clone(), self.position, self.charge)))
+        Ok((
+            cls.into(),
+            (
+                self.series.clone(),
+                self.position,
+                self.charge,
+                self.variant,
+                self.neutral_loss,
+            ),
+        ))
     }
 }
 

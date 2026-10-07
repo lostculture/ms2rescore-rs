@@ -6,6 +6,7 @@ use pyo3::prelude::*;
 use rayon::prelude::*;
 
 use crate::types::annotation::AnnotatedMS2Spectrum;
+use crate::utils::ion_key;
 
 /// Floor value for unmatched ions: log2(0.001). Derived from the canonical
 /// f64 constant to avoid precision drift.
@@ -66,22 +67,19 @@ pub fn ms2pip_extract_targets(
                 annotations
                     .iter()
                     .filter_map(|ann| {
-                        if ann.position < 1 {
+                        if ann.position < 1 || ann.neutral_loss {
                             return None;
                         }
-                        let ion_key = if ann.charge <= 1 {
-                            ann.series.clone()
-                        } else {
-                            format!("{}{}", ann.series, ann.charge)
-                        };
-                        if !ion_types_set.contains(ion_key.as_str()) {
+                        let series = ann.series.chars().next()?;
+                        let key = ion_key(series, ann.variant, ann.charge);
+                        if !ion_types_set.contains(key.as_str()) {
                             return None;
                         }
                         let idx = ann.position - 1;
                         if idx >= n_ions {
                             return None;
                         }
-                        Some((ion_key, idx))
+                        Some((key, idx))
                     })
                     .collect()
             })
