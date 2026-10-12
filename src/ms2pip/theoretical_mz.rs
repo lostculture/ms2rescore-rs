@@ -16,15 +16,17 @@ struct IonTypeSpec {
     series: char,
     variant: i8,
     charge: usize,
+    loss: String,
 }
 
 fn parse_ion_type_spec(ion_type: &str) -> Option<IonTypeSpec> {
-    let (series, variant, charge, _loss) = parse_ion_key(ion_type)?;
+    let (series, variant, charge, loss) = parse_ion_key(ion_type)?;
     Some(IonTypeSpec {
         key: ion_type.to_string(),
         series,
         variant,
         charge,
+        loss,
     })
 }
 
@@ -52,10 +54,10 @@ pub fn ms2pip_compute_theoretical_mz(
         })
         .collect::<PyResult<_>>()?;
 
-    let ion_index: HashMap<(char, i8, usize), usize> = ion_specs
+    let ion_index: HashMap<(char, i8, usize, String), usize> = ion_specs
         .iter()
         .enumerate()
-        .map(|(idx, spec)| ((spec.series, spec.variant, spec.charge), idx))
+        .map(|(idx, spec)| ((spec.series, spec.variant, spec.charge, spec.loss.clone()), idx))
         .collect();
 
     let results: Result<Vec<Vec<Vec<f32>>>, String> = py.detach(|| {
@@ -93,11 +95,11 @@ pub fn ms2pip_compute_theoretical_mz(
                 let mut mz_arrays = vec![vec![0.0_f32; n_ions]; ion_specs.len()];
 
                 for frag in &fragments {
-                    if frag.position < 1 || frag.position > n_ions || !frag.loss.is_empty() {
+                    if frag.position < 1 || frag.position > n_ions {
                         continue;
                     }
 
-                    let key = (frag.series, frag.variant, frag.charge);
+                    let key = (frag.series, frag.variant, frag.charge, frag.loss.to_string());
                     if let Some(&array_idx) = ion_index.get(&key) {
                         let pos_idx = frag.position - 1;
                         if mz_arrays[array_idx][pos_idx] == 0.0 {
