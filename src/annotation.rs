@@ -76,7 +76,7 @@ pub(crate) fn parse_mass_mode(s: &str) -> PyResult<MassMode> {
     }
 }
 
-fn parse_tolerance(
+pub(crate) fn parse_tolerance(
     tolerance_value: f64,
     tolerance_mode: &str,
 ) -> PyResult<rustyms::quantities::Tolerance<MassOverCharge>> {

@@ -39,5 +39,7 @@ fn ms2rescore_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
         ms2pip::targets::ms2pip_extract_targets,
         m
     )?)?;
+    m.add_function(wrap_pyfunction!(ms2pip::internal::ms2pip_internal_fragments, m)?)?;
+    m.add_function(wrap_pyfunction!(ms2pip::internal::ms2pip_extract_internal_targets, m)?)?;
     Ok(())
 }
