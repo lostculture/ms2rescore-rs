@@ -1,6 +1,7 @@
 use rustyms::annotation::model::FragmentationModel;
 use rustyms::chemistry::MassMode;
-use rustyms::fragment::{Fragment, FragmentType};
+use rustyms::fragment::{Fragment, FragmentType, NeutralLoss};
+use rustyms::molecular_formula;
 use rustyms::prelude::CompoundPeptidoformIon;
 use rustyms::quantities::{Tolerance, WithinTolerance};
 use rustyms::sequence::AminoAcid;
@@ -15,27 +16,45 @@ pub struct CachedFragment {
     pub charge: usize,
     /// Hydrogen-shift variant from rustyms (z+1 = 1, c-1 = -1, ...).
     pub variant: i8,
-    /// True if the fragment carries a neutral loss (e.g. b-H2O).
-    pub neutral_loss: bool,
+    /// Named neutral loss: "" (none), "h2o" or "nh3".
+    pub loss: &'static str,
     pub mz: f64,
 }
 
-/// Build an ion-type key: `<series>[<signed variant>][<charge>]`.
+/// Name of a fragment's neutral loss: "" for none, "h2o" / "nh3" for a single water or ammonia loss.
+/// None for any other loss (dropped by the callers).
+pub fn loss_name(losses: &[NeutralLoss]) -> Option<&'static str> {
+    match losses {
+        [] => Some(""),
+        [NeutralLoss::Loss(1, f)] if *f == molecular_formula!(H 2 O 1) => Some("h2o"),
+        [NeutralLoss::Loss(1, f)] if *f == molecular_formula!(H 3 N 1) => Some("nh3"),
+        _ => None,
+    }
+}
+
+/// Build an ion-type key: `<series>[<signed variant>][<charge>][-<loss>]`.
 ///
 /// Variant 0 keeps the legacy form (`y`, `y2` = doubly charged y). Non-zero
-/// variants separate the charge with an underscore so that it cannot be read
-/// as part of the variant: `z+1`, `z+1_2`, `c-1`.
-pub fn ion_key(series: char, variant: i8, charge: usize) -> String {
-    match (variant, charge) {
+/// variants separate the charge with an underscore: `z+1`, `z+1_2`, `c-1`.
+/// A neutral loss is appended for variant-0 ions only: `b-h2o`, `y2-nh3`.
+pub fn ion_key(series: char, variant: i8, charge: usize, loss: &str) -> String {
+    let base = match (variant, charge) {
         (0, c) if c <= 1 => series.to_string(),
         (0, c) => format!("{series}{c}"),
         (v, c) if c <= 1 => format!("{series}{v:+}"),
         (v, c) => format!("{series}{v:+}_{c}"),
-    }
+    };
+    if loss.is_empty() { base } else { format!("{base}-{loss}") }
 }
 
-/// Parse an ion-type key made by [`ion_key`] into (series, variant, charge).
-pub fn parse_ion_key(key: &str) -> Option<(char, i8, usize)> {
+/// Parse an ion-type key made by [`ion_key`] into (series, variant, charge, loss).
+pub fn parse_ion_key(key: &str) -> Option<(char, i8, usize, String)> {
+    for loss in ["h2o", "nh3"] {
+        if let Some(base) = key.strip_suffix(&format!("-{loss}")) {
+            let (series, variant, charge, inner) = parse_ion_key(base)?;
+            return (variant == 0 && inner.is_empty()).then(|| (series, 0, charge, loss.to_string()));
+        }
+    }
     let mut chars = key.chars();
     let series = chars.next()?;
     if !matches!(series, 'a' | 'b' | 'c' | 'x' | 'y' | 'z') {
@@ -45,7 +64,7 @@ pub fn parse_ion_key(key: &str) -> Option<(char, i8, usize)> {
     let all_digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
 
     if rest.is_empty() {
-        return Some((series, 0, 1));
+        return Some((series, 0, 1, String::new()));
     }
     if let Some(sign) = rest.chars().next().filter(|c| *c == '+' || *c == '-') {
         let (num, charge) = match rest[1..].split_once('_') {
@@ -58,11 +77,11 @@ pub fn parse_ion_key(key: &str) -> Option<(char, i8, usize)> {
         }
         let magnitude: i8 = num.parse().ok()?;
         let variant = if sign == '-' { -magnitude } else { magnitude };
-        return (variant != 0).then_some((series, variant, charge));
+        return (variant != 0).then_some((series, variant, charge, String::new()));
     }
     if all_digits(rest) {
         let charge: usize = rest.parse().ok()?;
-        return (charge > 0).then_some((series, 0, charge));
+        return (charge > 0).then_some((series, 0, charge, String::new()));
     }
     None
 }
@@ -117,14 +136,8 @@ pub fn build_theoretical_fragments(
         .filter_map(|frag| {
             let (series, position, charge, variant) = parse_fragment(&frag)?;
             let mz = frag.mz(mode)?.value;
-            Some(CachedFragment {
-                series,
-                position,
-                charge,
-                variant,
-                neutral_loss: !frag.neutral_loss.is_empty(),
-                mz,
-            })
+            let loss = loss_name(&frag.neutral_loss)?;
+            Some(CachedFragment { series, position, charge, variant, loss, mz })
         })
         .collect()
 }
@@ -225,25 +238,43 @@ mod tests {
 
     #[test]
     fn test_ion_key_roundtrip() {
-        for (series, variant, charge, key) in [
-            ('y', 0, 1, "y"),
-            ('y', 0, 2, "y2"),
-            ('z', 1, 1, "z+1"),
-            ('z', 2, 1, "z+2"),
-            ('z', 1, 2, "z+1_2"),
-            ('c', -1, 1, "c-1"),
-            ('c', -1, 3, "c-1_3"),
+        for (series, variant, charge, loss, key) in [
+            ('y', 0, 1, "", "y"),
+            ('y', 0, 2, "", "y2"),
+            ('z', 1, 1, "", "z+1"),
+            ('z', 2, 1, "", "z+2"),
+            ('z', 1, 2, "", "z+1_2"),
+            ('c', -1, 1, "", "c-1"),
+            ('c', -1, 3, "", "c-1_3"),
+            ('b', 0, 1, "h2o", "b-h2o"),
+            ('y', 0, 1, "nh3", "y-nh3"),
+            ('a', 0, 1, "nh3", "a-nh3"),
+            ('y', 0, 2, "h2o", "y2-h2o"),
         ] {
-            assert_eq!(ion_key(series, variant, charge), key);
-            assert_eq!(parse_ion_key(key), Some((series, variant, charge)));
+            assert_eq!(ion_key(series, variant, charge, loss), key);
+            assert_eq!(parse_ion_key(key), Some((series, variant, charge, loss.to_string())));
         }
     }
 
     #[test]
     fn test_parse_ion_key_rejects_malformed() {
-        for bad in ["", "q", "z+", "z+_2", "z+1x", "z1_2", "z+1_", "z+0", "z0", "z+1_0", "Z"] {
+        for bad in [
+            "", "q", "z+", "z+_2", "z+1x", "z1_2", "z+1_", "z+0", "z0", "z+1_0", "Z",
+            "b-co", "b-", "z+1-h2o", "b-h2o-nh3", "yb", "ya",
+        ] {
             assert_eq!(parse_ion_key(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn test_loss_name() {
+        use rustyms::fragment::NeutralLoss;
+        use rustyms::molecular_formula;
+        assert_eq!(loss_name(&[]), Some(""));
+        assert_eq!(loss_name(&[NeutralLoss::Loss(1, molecular_formula!(H 2 O 1))]), Some("h2o"));
+        assert_eq!(loss_name(&[NeutralLoss::Loss(1, molecular_formula!(H 3 N 1))]), Some("nh3"));
+        assert_eq!(loss_name(&[NeutralLoss::Loss(1, molecular_formula!(C 1 O 1))]), None);
+        assert_eq!(loss_name(&[NeutralLoss::Loss(2, molecular_formula!(H 2 O 1))]), None);
     }
 
     #[test]

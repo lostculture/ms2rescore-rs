@@ -19,7 +19,7 @@ struct IonTypeSpec {
 }
 
 fn parse_ion_type_spec(ion_type: &str) -> Option<IonTypeSpec> {
-    let (series, variant, charge) = parse_ion_key(ion_type)?;
+    let (series, variant, charge, _loss) = parse_ion_key(ion_type)?;
     Some(IonTypeSpec {
         key: ion_type.to_string(),
         series,
@@ -93,7 +93,7 @@ pub fn ms2pip_compute_theoretical_mz(
                 let mut mz_arrays = vec![vec![0.0_f32; n_ions]; ion_specs.len()];
 
                 for frag in &fragments {
-                    if frag.position < 1 || frag.position > n_ions || frag.neutral_loss {
+                    if frag.position < 1 || frag.position > n_ions || !frag.loss.is_empty() {
                         continue;
                     }
 

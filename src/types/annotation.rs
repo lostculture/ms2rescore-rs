@@ -10,7 +10,7 @@ type AnnotatedMS2SpectrumReduceArgs = (
     Vec<Vec<FragmentAnnotation>>,
 );
 
-type FragmentAnnotationReduceArgs = (String, usize, usize, i8, bool);
+type FragmentAnnotationReduceArgs = (String, usize, usize, i8, String);
 
 /// A single fragment annotation on a peak.
 #[pyclass(module = "ms2rescore_rs", get_all, from_py_object)]
@@ -24,38 +24,38 @@ pub struct FragmentAnnotation {
     pub charge: usize,
     /// Hydrogen-shift variant: 0 for the plain ion, +1 for z+1, -1 for c-1, ...
     pub variant: i8,
-    /// True if the matched fragment carries a neutral loss (e.g. b-H2O)
-    pub neutral_loss: bool,
+    /// Neutral loss: "" (none), "h2o" or "nh3"
+    pub loss: String,
 }
 
 #[pymethods]
 impl FragmentAnnotation {
     #[new]
-    #[pyo3(signature = (series, position, charge, variant=0, neutral_loss=false))]
+    #[pyo3(signature = (series, position, charge, variant=0, loss="".to_string()))]
     pub fn new(
         series: String,
         position: usize,
         charge: usize,
         variant: i8,
-        neutral_loss: bool,
+        loss: String,
     ) -> Self {
         FragmentAnnotation {
             series,
             position,
             charge,
             variant,
-            neutral_loss,
+            loss,
         }
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "FragmentAnnotation(series='{}', position={}, charge={}, variant={}, neutral_loss={})",
+            "FragmentAnnotation(series='{}', position={}, charge={}, variant={}, loss='{}')",
             self.series,
             self.position,
             self.charge,
             self.variant,
-            if self.neutral_loss { "True" } else { "False" }
+            self.loss
         )
     }
 
@@ -73,7 +73,7 @@ impl FragmentAnnotation {
                 self.position,
                 self.charge,
                 self.variant,
-                self.neutral_loss,
+                self.loss.clone(),
             ),
         ))
     }

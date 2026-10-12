@@ -22,12 +22,39 @@ pub(crate) fn parse_fragmentation_model(s: &str) -> PyResult<FragmentationModel>
         "ethcd" | "et+hcd" | "et_hcd" => Ok((*FragmentationModel::ethcd()).clone()),
         "ead" => Ok((*FragmentationModel::ead()).clone()),
         "ead_ext" => Ok(ead_extended()),
+        "astral_hcd" => Ok(astral_hcd()),
         "all" => Ok((*FragmentationModel::all()).clone()),
         other => Err(PyValueError::new_err(format!(
             "Unsupported fragmentation_model: {other}. \
-             Expected one of: cidhcd, etd, ethcd, ead, ead_ext, all."
+             Expected one of: cidhcd, etd, ethcd, ead, ead_ext, astral_hcd, all."
         ))),
     }
+}
+
+/// Orbitrap Astral HCD: a, b and y at every position with single H2O or NH3 losses; no satellite,
+/// modification-specific or diagnostic ions. Matches the Mascot instrument ASTRAL-HCD (terminal part).
+fn astral_hcd() -> FragmentationModel {
+    use rustyms::annotation::model::{Location, PrimaryIonSeries, SatelliteIonSeries};
+    use rustyms::fragment::NeutralLoss;
+    use rustyms::molecular_formula;
+    let losses = vec![
+        NeutralLoss::Loss(1, molecular_formula!(H 2 O 1)),
+        NeutralLoss::Loss(1, molecular_formula!(H 3 N 1)),
+    ];
+    let mut model = (*FragmentationModel::cid_hcd()).clone();
+    model.a = PrimaryIonSeries::default().location(Location::All).neutral_losses(losses.clone());
+    model.b = PrimaryIonSeries::default().neutral_losses(losses.clone());
+    model.y = PrimaryIonSeries::default().neutral_losses(losses);
+    model.c = PrimaryIonSeries::none();
+    model.x = PrimaryIonSeries::none();
+    model.z = PrimaryIonSeries::none();
+    model.d = SatelliteIonSeries::default();
+    model.v = SatelliteIonSeries::default();
+    model.w = SatelliteIonSeries::default();
+    model.immonium = None;
+    model.modification_specific_neutral_losses = false;
+    model.modification_specific_diagnostic_ions = None;
+    model
 }
 
 /// rustyms EAD with the hydrogen-transfer products seen in EAD/ECD spectra:
@@ -227,7 +254,7 @@ pub fn annotate_ms2_spectra(
                             position: frag.position,
                             charge: frag.charge,
                             variant: frag.variant,
-                            neutral_loss: frag.neutral_loss,
+                            loss: frag.loss.to_string(),
                         });
                     }
                 }
@@ -246,5 +273,42 @@ pub fn annotate_ms2_spectra(
     match results {
         Ok(v) => Ok(v),
         Err(e) => Err(PyException::new_err(e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::build_theoretical_fragments;
+    use rustyms::chemistry::MassMode;
+
+    fn fragments(proforma: &str, charge: isize) -> Vec<crate::utils::CachedFragment> {
+        let model = parse_fragmentation_model("astral_hcd").unwrap();
+        let pep = CompoundPeptidoformIon::pro_forma(proforma, None).unwrap();
+        let z = rustyms::system::isize::Charge::new::<rustyms::system::e>(charge);
+        build_theoretical_fragments(&pep, z, &model, MassMode::Monoisotopic)
+    }
+
+    #[test]
+    fn astral_hcd_has_a_ions_at_every_position_and_both_losses() {
+        let frags = fragments("PEPTIDEK", 2);
+        let a: Vec<usize> = frags.iter()
+            .filter(|f| f.series == 'a' && f.charge == 1 && f.loss.is_empty())
+            .map(|f| f.position).collect();
+        assert_eq!(a.len(), 7, "a1..a7");
+        for (series, loss) in [('a', "h2o"), ('a', "nh3"), ('b', "h2o"), ('b', "nh3"), ('y', "h2o"), ('y', "nh3")] {
+            assert!(frags.iter().any(|f| f.series == series && f.loss == loss), "{series}-{loss}");
+        }
+        assert!(!frags.iter().any(|f| matches!(f.series, 'c' | 'x' | 'z')));
+    }
+
+    #[test]
+    fn astral_hcd_b2_ion_mass() {
+        // b2 of PEPTIDEK: P + E + proton = 97.052764 + 129.042593 + 1.007276 = 227.102633
+        let frags = fragments("PEPTIDEK", 2);
+        let b2 = frags.iter().find(|f| f.series == 'b' && f.position == 2 && f.charge == 1 && f.loss.is_empty()).unwrap();
+        assert!((b2.mz - 227.102633).abs() < 1e-4, "{}", b2.mz);
+        let b2_h2o = frags.iter().find(|f| f.series == 'b' && f.position == 2 && f.charge == 1 && f.loss == "h2o").unwrap();
+        assert!((b2_h2o.mz - (227.102633 - 18.010565)).abs() < 1e-4);
     }
 }

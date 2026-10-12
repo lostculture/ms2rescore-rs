@@ -67,11 +67,11 @@ pub fn ms2pip_extract_targets(
                 annotations
                     .iter()
                     .filter_map(|ann| {
-                        if ann.position < 1 || ann.neutral_loss {
+                        if ann.position < 1 || !ann.loss.is_empty() {
                             return None;
                         }
                         let series = ann.series.chars().next()?;
-                        let key = ion_key(series, ann.variant, ann.charge);
+                        let key = ion_key(series, ann.variant, ann.charge, "");
                         if !ion_types_set.contains(key.as_str()) {
                             return None;
                         }
