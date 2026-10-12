@@ -397,3 +397,13 @@ class TestScoreMS2Spectra:
 
         # Total intensity should include all peaks
         assert feats["ln_total_intensity"] > 0
+
+
+def test_fragment_annotation_neutral_loss_flag():
+    """`neutral_loss` (bool) stays available for older callers next to the named `loss`."""
+    plain = FragmentAnnotation("b", 2, 1)
+    lossy = FragmentAnnotation("b", 2, 1, loss="h2o")
+    assert plain.loss == "" and plain.neutral_loss is False
+    assert lossy.loss == "h2o" and lossy.neutral_loss is True
+    with pytest.raises(AttributeError):
+        lossy.neutral_loss = False

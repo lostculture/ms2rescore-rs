@@ -48,6 +48,13 @@ impl FragmentAnnotation {
         }
     }
 
+    /// True when the fragment carries a neutral loss (read-only; kept for callers that
+    /// predate the named `loss`).
+    #[getter]
+    fn neutral_loss(&self) -> bool {
+        !self.loss.is_empty()
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "FragmentAnnotation(series='{}', position={}, charge={}, variant={}, loss='{}')",
